@@ -1,7 +1,7 @@
 name: JavDB Daily Ingestion Pipeline
 
 permissions:
-  contents: write
+  contents: read
 
 on:
   workflow_dispatch:
