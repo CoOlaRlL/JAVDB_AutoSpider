@@ -1,0 +1,163 @@
+name: JAVDB Simple Crawler
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Target URL to scrape (e.g., https://javdb.com/actors/xxx)'
+        required: true
+        type: string
+      start_page:
+        description: 'Starting page number'
+        required: false
+        default: '1'
+        type: string
+      end_page:
+        description: 'Ending page number (leave empty to scan all pages)'
+        required: false
+        default: ''
+        type: string
+      ignore_history:
+        description: 'Ignore history file (parse all movies regardless of history)'
+        required: false
+        default: true
+        type: boolean
+      ignore_release_date:
+        description: 'Ignore release date filter (parse all entries, not just today/yesterday)'
+        required: false
+        default: false
+        type: boolean
+      phase:
+        description: 'Which phase to run: 1 (subtitle only), 2 (non-subtitle only), all (both phases)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - 'all'
+          - '1'
+          - '2'
+  # 定时任务（可选）
+  schedule:
+    # 每天凌晨4点运行（北京时间12点）
+    - cron: '0 20 * * *'
+
+jobs:
+  run-crawler:
+    runs-on: ubuntu-latest
+    environment: Production
+    env:
+      TZ: Asia/Shanghai
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 lxml pandas
+          # 如果项目有requirements.txt，使用：
+          # pip install -r requirements.txt
+          
+      - name: Create necessary directories
+        run: |
+          mkdir -p logs
+          mkdir -p reports
+          mkdir -p reports/DailyReport
+          mkdir -p reports/AdHoc
+          echo "Directories created successfully"
+          
+      - name: Display crawl parameters
+        run: |
+          echo "============================================"
+          echo "Crawler Parameters:"
+          echo "============================================"
+          echo "URL: ${{ inputs.url }}"
+          echo "Start Page: ${{ inputs.start_page }}"
+          echo "End Page: ${{ inputs.end_page || 'All pages' }}"
+          echo "Ignore History: ${{ inputs.ignore_history }}"
+          echo "Ignore Release Date: ${{ inputs.ignore_release_date }}"
+          echo "Phase: ${{ inputs.phase }}"
+          echo "============================================"
+          
+      - name: Run spider script
+        run: |
+          # 构建爬虫命令
+          CMD="python scripts/spider.py"
+          
+          # 添加URL参数（使用workflow_dispatch输入）
+          URL="${{ inputs.url }}"
+          if [ -n "$URL" ]; then
+            CMD="$CMD --url '$URL'"
+          fi
+          
+          # 添加页码参数
+          CMD="$CMD --start-page ${{ inputs.start_page || '1' }}"
+          
+          # 添加结束页码或--all标志
+          END_PAGE="${{ inputs.end_page }}"
+          if [ -z "$END_PAGE" ]; then
+            CMD="$CMD --all"
+          else
+            CMD="$CMD --end-page $END_PAGE"
+          fi
+          
+          # 添加阶段参数
+          CMD="$CMD --phase ${{ inputs.phase || 'all' }}"
+          
+          # 添加历史忽略标志
+          if [ "${{ inputs.ignore_history }}" = "true" ]; then
+            CMD="$CMD --ignore-history"
+          fi
+          
+          # 添加发布日期忽略标志
+          if [ "${{ inputs.ignore_release_date }}" = "true" ]; then
+            CMD="$CMD --ignore-release-date"
+          fi
+          
+          echo "Executing: $CMD"
+          eval $CMD
+          
+      - name: Upload reports as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crawler-reports
+          path: |
+            reports/**/*.csv
+            reports/**/*.json
+          retention-days: 7
+          if-no-files-found: warn
+          
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crawler-logs
+          path: logs/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+          
+      - name: Display summary
+        if: always()
+        run: |
+          echo "## Crawler Run Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: ${{ inputs.url }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Start Page**: ${{ inputs.start_page }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **End Page**: ${{ inputs.end_page || 'All pages' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Phase**: ${{ inputs.phase }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "Reports have been saved to the `reports/` directory." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download the generated reports and logs from the **Artifacts** section." >> $GITHUB_STEP_SUMMARY
